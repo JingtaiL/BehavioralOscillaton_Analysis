@@ -1,0 +1,191 @@
+---
+title: "Spectral analysis with Bonferroni correction"
+output:
+  html_notebook: default
+  html_document: default
+date: "10/9/2017"
+---
+
+### script info
+update date: Oct 04,2017  
+* This script is used to extract significant frequencies (p<0.05, corrected and uncorrected)  
+* Visualize FFT results for each condition  
+
+```{r message = FALSE, warning = FALSE}
+library(tidyverse)
+library(cowplot)
+```
+
+## Find significant frequencies
+
+```{r}
+# set important parameters
+
+rm(list = ls())
+
+fs <- 25
+nfft <- 96 # refer to 'do_spectral.m'
+pvalue <- 0.05
+
+filepattern <- c("LP_Smoothed_")
+```
+
+### check uncorrected p values (<.05)
+```{r echo=FALSE}
+# put all data into a big list
+constant <- c("Con100R_pvalue_uncor.txt","Con100L_pvalue_uncor.txt",
+            "Con50R_invalid_pvalue_uncor.txt","Con50R_valid_pvalue_uncor.txt",
+            "Con50L_invalid_pvalue_uncor.txt","Con50L_valid_pvalue_uncor.txt")
+
+files <- paste0(filepattern,constant)
+
+allconds <- vector("list",length(files))
+
+for (i in seq_along(files)){
+  allconds[[i]]<-as.vector(t(read.table(files[i]))) #convert the data frame to vector
+}
+names(allconds)<-files
+
+# deal with each list
+results<-vector("list",length(files))
+p_hz<-vector("list",length(files))
+for (i in seq_along(allconds)){
+  p.val<-data.frame(allconds[[i]])
+  p.val$Hz<-c((0:(nfft/2-1))*fs/nfft) # change it to c((0:nfft/2)*fs/nfft) if the nyquist frequency is included
+  colnames(p.val)<-c("p","Hz")
+  rownames(p.val)<-NULL
+  p_hz[[i]]<-p.val  
+  results[[i]]<-p.val %>% filter(p<=pvalue)
+  }
+names(results)<-files
+names(p_hz)<-files
+
+#check the results (uncorrected)
+results 
+```
+
+### check out Bonferroni results
+
+```{r echo=FALSE}
+# deal with each list
+results_bonf<-vector("list",length(files))
+p_hz_bonf<-vector("list",length(files))
+for (i in seq_along(allconds)){
+  p.val_bonf<-data.frame(p.adjust(allconds[[i]],method='bonferroni'))
+  p.val_bonf$Hz<-c((0:(nfft/2-1))*fs/nfft) # change it to c((0:nfft/2)*fs/nfft) if the nyquist frequency is included
+  colnames(p.val_bonf)<-c("p","Hz")
+  rownames(p.val_bonf)<-NULL
+  p_hz_bonf[[i]]<-p.val_bonf  
+  results_bonf[[i]]<-p.val_bonf %>% filter(p<=pvalue)
+  }
+names(results_bonf)<-files
+names(p_hz_bonf)<-files
+
+#check the results (uncorrected)
+results_bonf
+```
+
+#### plot mean FFT results for all conditions
+
+```{r echo=FALSE}
+
+# prepare data
+constantfft<-c('Con50L_invalid_allsub_ampli_mean.txt','Con50L_valid_allsub_ampli_mean.txt','Con50R_invalid_allsub_ampli_mean.txt',
+            'Con50R_valid_allsub_ampli_mean.txt','Con100L_allsub_ampli_mean.txt','Con100R_allsub_ampli_mean.txt')
+
+fftfiles<-paste0(filepattern, constantfft)
+
+all_con<- fftfiles %>% map(read.table) %>% reduce(rbind)
+  
+trans_all_con<-data.frame(t(all_con))
+
+colnames(trans_all_con)<-c("L_inval_50","L_val_50","R_inval_50","R_val_50",
+                           "L_100","R_100")
+
+trans_all_con$Hz<-c((0:(nfft/2-1))*fs/nfft)
+rownames(trans_all_con)<-NULL
+long_all_con<- trans_all_con %>% gather(Conditions,Amplitude,L_inval_50:R_100)
+long_all_con$Conditions<-factor(long_all_con$Conditions, levels=(c("L_100","R_100","L_val_50","L_inval_50","R_val_50","R_inval_50")))
+```
+
+* prepare data for each condition
+
+```{r echo=FALSE}
+left_50<-long_all_con %>% filter(Conditions=="L_val_50"| Conditions=="L_inval_50")
+right_50<-long_all_con %>% filter(Conditions=="R_val_50"| Conditions=="R_inval_50")
+con100<-long_all_con %>% filter(Conditions=="L_100"| Conditions=="R_100")
+
+```
+
+* plot average FFT results 
+
+Congruent/Incongruent in 50% cue condition in **left visual field**:
+
+```{r echo=FALSE}
+plot_L50<-ggplot(left_50,aes(x=Hz,y=Amplitude,color=Conditions))+geom_line(size=1.5,alpha=0.7)+
+  scale_color_manual(values=c("#E6352F7F","#3D79F37F"),labels=c("Congruent","Incongruent"))+
+  xlab("Frequency (Hz)")+ylab("Spectral Amplitude")+
+  guides(color=guide_legend(title=NULL))+theme_classic()+
+  theme(axis.title.x=element_text(size=16),
+        axis.title.y=element_text(size=16),legend.position="none")+
+  scale_x_continuous(breaks=seq(0,12,2))
+  #+theme(legend.position="top")+ggtitle("FFT of 50% Valid Condition in LVF")
+plot_L50
+```
+
+Congruent/Incongruent in 50% cue condition in **right visual field**:
+```{r echo=FALSE}
+plot_R50<-ggplot(right_50,aes(x=Hz,y=Amplitude,color=Conditions))+geom_line(size=1.5,alpha=0.7)+
+  scale_color_manual(values=c("#E6352F7F","#3D79F37F"),labels=c("Congruent","Incongruent"))+
+  xlab("Frequency (Hz)")+ylab("Spectral Amplitude")+
+  guides(color=guide_legend(title=NULL))+theme_classic()+
+  theme(axis.title.x=element_text(size=16),
+        axis.title.y=element_text(size=16),
+        legend.position="none")+scale_x_continuous(breaks=seq(0,12,2))
+plot_R50
+```
+
+100% cue condition in **left visual field**
+```{r echo=FALSE}
+con100_L<-con100 %>% filter(Conditions=='L_100')
+plot_100L<-ggplot(con100_L,aes(x=Hz,y=Amplitude))+geom_line(size=1.5,color="#F9B90A7F",alpha=0.7)+
+  xlab("Frequency (Hz)")+ylab("Spectral Amplitude")+
+  theme_classic()+scale_x_continuous(breaks=seq(0,12,2))+ 
+  theme(axis.title.x=element_text(size=16),
+        axis.title.y=element_text(size=16))
+plot_100L
+```
+
+100% cue condition in **right visual field**
+```{r echo=FALSE}
+con100_R<-con100 %>% filter(Conditions=='R_100')
+plot_100R<-ggplot(con100_R,aes(x=Hz,y=Amplitude))+geom_line(size=1.5,color="#F9B90A7F",alpha=0.7)+
+  xlab("Frequency (Hz)")+ylab("Spectral Amplitude")+
+  scale_x_continuous(breaks=seq(0,12,2))+theme_classic()+
+  theme(axis.title.x=element_text(size=16),
+        axis.title.y=element_text(size=16))
+plot_100R
+```
+
+grid plot of four images
+```{r echo=FALSE}
+plot_grid(plot_L50,plot_R50,plot_100L,plot_100R,nrow=2)
+```
+
+
+* find out **the peak frequencies**, they can be significant or not
+```{r}
+listcon<-list("L_val_50","L_inval_50","R_val_50","R_inval_50","L_100","R_100")
+eachcon<-listcon %>% map(function(x) filter(long_all_con,Conditions==x))
+names(eachcon)<-c("L_val_50","L_inval_50","R_val_50","R_inval_50","L_100","R_100")
+
+eachcon %>% map(function(x) filter(x,Amplitude==max(x$Amplitude)))
+```
+
+* find out the second peak (can be significant or not)
+
+```{r}
+# print out the top 5 frequencies, which might include the second peak
+eachcon %>% map(function(x) x %>% top_n(10,Amplitude))
+```
+

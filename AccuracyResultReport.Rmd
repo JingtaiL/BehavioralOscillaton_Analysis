@@ -1,0 +1,434 @@
+---
+title: "Accuracy Results Report"
+output: html_document
+update date: 10/2/2017
+---
+## load subjects
+All current subjects (*including possible outliers*) were loaded.
+
+```{r message = FALSE, warning = FALSE}
+library(tidyverse)
+library(cowplot)
+```
+Within subjects, trials with **>nSD** response time and offset degrees (absolute deviation) were excluded.  
+```{r}
+subno<-c(1:19,24:36,38,40,41,43:46)
+subs<-paste0("Sub",subno)
+```
+
+```{r echo=FALSE}
+# "s": input subs; "e": 1, SD method, 2, MAD method; "p": nSD or nMAD 
+read_data <- function(s,e,p){
+  clean_data<-data.frame() 
+  trial_exclusion<-vector("double",length(s))
+  
+  for (subNo in seq_along(s)){
+    
+    session1<-sprintf('%s_Session1_rawinfo.txt',s[subNo])
+    session2<-sprintf('%s_Session2_rawinfo.txt',s[subNo])
+    
+    files<-list(session1,session2)
+    rawdata<-files %>% map(function(x) read.table(x, sep="\t", 
+                                                  colClasses = c("factor","factor","factor","factor","factor","factor","numeric",
+                                                                 "numeric","numeric","numeric","numeric","numeric","numeric"))) %>%
+      reduce(rbind)
+    
+    colnames(rawdata)<-c("subject","session","block","type","loc","val","response","oriLeft","oriRight","RT","ISI","error90","error180")
+    
+   if (e == 1){
+     # to remove those with longer response time and higher errors (pSD away from the mean and shorter than 0.1s)
+     rawdata$abs90<-abs(rawdata$error90)
+     
+     attach(rawdata)
+     
+     aver_RT<-mean(RT)
+     sd_RT<-sd(RT)
+     outlier_RT<-aver_RT+p*sd_RT
+     detach(rawdata)
+     data_RT<-rawdata %>% filter(RT<outlier_RT & RT>0.1)
+     
+     attach(data_RT)
+     aver_error<-mean(abs90)
+     sd_error<-sd(abs90)
+     outlier_error<-aver_error+p*sd_error
+     detach(data_RT)
+     AftRemOutli<-data_RT %>% filter(abs90<outlier_error)
+   } else if (e == 2) {
+     # remove trials using MAD method
+     rawdata$abs90<-abs(rawdata$error90)
+     attach(rawdata)
+     med_RT<-median(RT)
+     mad_RT<-mad(RT)
+     outlier_RT<-med_RT+p*mad_RT
+     detach(rawdata)
+     data_RT<-rawdata %>% filter(RT<outlier_RT & RT>0.1)
+     
+     attach(data_RT)
+     med_error<-median(abs90)
+     mad_error<-mad(abs90)
+     outlier_error<-med_error+p*mad_error
+     
+     detach(data_RT)
+     AftRemOutli<-data_RT %>% filter(abs90<outlier_error)
+   }
+   #  # this is optional!!!!
+   #   mean_deg <- mean(AftRemOutli$abs90)
+   # AftRemOutli <- AftRemOutli %>% mutate(normdata = abs90/mean_deg)
+    
+    # report exlcusion rate for each subject
+    exclusion_rate<-(nrow(rawdata)-nrow(AftRemOutli))/nrow(rawdata)
+    trial_exclusion[subNo] <- exclusion_rate
+    clean_data <- rbind(clean_data,AftRemOutli)
+    
+    # set them to gloabl variables to use later
+    trial_exclusion <<- trial_exclusion
+    clean_data <<- clean_data
+  }
+}
+```
+Use `read_data` function to read and preprocess data
+```{r results="hold"}
+read_data(subs,1,3) # use SD(1) method (if 2, then MAD method), 3SD as exclusion threshold
+head(clean_data)
+```
+
+mean trial exlusion rate for all **`r length(subs)`** subjects was **`r mean(trial_exclusion)`**.
+
+* **optional** use this script block or 'data_condition.R' to prepare data for smoothing
+```{r eval=FALSE, echo=FALSE}
+# run this or you can use 'data_condition.R' script to get mean result at each time point for each subject, the outputs can be used for smoothing
+#----------------------------------------------------------------
+#con_100_left 
+con100_left<-clean_data %>% split(.$subject) %>% map(function(x) x %>% filter(val==-1,loc==2) %>% 
+                                          group_by(ISI) %>% summarise(m_error=mean(abs90))) 
+for(i in 1:length(con100_left)){
+  data<-con100_left[[i]]
+  write.table(data,sprintf('Con100L_sub%d.txt',as.numeric(names(con100_left)[i])),sep="\t",row.names=FALSE,col.names = FALSE)
+}
+
+#con_100_right 
+con100_right<-clean_data %>% split(.$subject) %>% map(function(x) x %>% filter(val==-1,loc==1) %>% 
+                                                       group_by(ISI) %>% summarise(m_error=mean(abs90))) 
+for(i in 1:length(con100_right)){
+  data<-con100_right[[i]]
+  write.table(data,sprintf('Con100R_sub%d.txt',as.numeric(names(con100_right)[i])),sep="\t",row.names=FALSE,col.names = FALSE)
+}
+
+#con_50_left_valid
+con50_left_val<-clean_data %>% split(.$subject) %>% map(function(x) x %>% filter(type==2,loc==2,val==1) %>% 
+                                                        group_by(ISI) %>% summarise(m_error=mean(abs90))) 
+for(i in 1:length(con50_left_val)){
+  data<-con50_left_val[[i]]
+  write.table(data,sprintf('Con50L_valid_sub%d.txt',as.numeric(names(con50_left_val)[i])),sep="\t",row.names=FALSE,col.names = FALSE)
+}
+
+#con_50_left_invalid
+con50_left_inval<-clean_data %>% split(.$subject) %>% map(function(x) x %>% filter(type==2,loc==2,val==0) %>% 
+                                                          group_by(ISI) %>% summarise(m_error=mean(abs90))) 
+for(i in 1:length(con50_left_inval)){
+  data<-con50_left_inval[[i]]
+  write.table(data,sprintf('Con50L_invalid_sub%d.txt',as.numeric(names(con50_left_inval)[i])),sep="\t",row.names=FALSE,col.names = FALSE)
+}
+
+# for con_50_right_valid
+con50_right_val<-clean_data %>% split(.$subject) %>% map(function(x) x %>% filter(type==2,loc==1,val==1) %>% 
+                                                          group_by(ISI) %>% summarise(m_error=mean(abs90))) 
+for(i in 1:length(con50_right_val)){
+  data<-con50_right_val[[i]]
+  write.table(data,sprintf('Con50R_valid_sub%d.txt',as.numeric(names(con50_right_val)[i])),sep="\t",row.names=FALSE,col.names = FALSE)
+}
+
+# for con_50_right_invalid
+con50_right_inval<-clean_data %>% split(.$subject) %>% map(function(x) x %>% filter(type==2,loc==1,val==0) %>% 
+                                                            group_by(ISI) %>% summarise(m_error=mean(abs90))) 
+for(i in 1:length(con50_right_inval)){
+  data<-con50_right_inval[[i]]
+  write.table(data,sprintf('Con50R_invalid_sub%d.txt',as.numeric(names(con50_right_inval)[i])),sep="\t",row.names=FALSE,col.names = FALSE)
+}
+
+# # mvoe files this part needs to be fixed
+# list.of.txt<-list.files(getwd(),pattern='Con*',full.names=T) # find all generated texts
+# file.copy(list.of.txt,'./DataByCondition')
+# file.remove(list.of.txt) # since we have a copy of text files, delete them safely
+```
+
+
+## find subject outliers 
+
+Used MAD or SD method to find out outliers, the rejection criterion was set to **n** to get the same subjects as previous. The outputs were outliers.
+
+```{r echo=FALSE}
+indmean_dev<-clean_data %>% group_by(subject) %>% summarise(mean_dev=mean(abs90))
+exclude_sub <- function(x,e,p){
+  if (e ==1) {
+    outlier_sd <- mean(x)+p*sd(x) 
+    index <<- x > outlier_sd
+  } else if (e==2) {
+    outlier_mad <- mean(x)+p*mad(x) 
+    index <<- x > outlier_mad    
+  }
+}
+```
+
+```{r}
+mean_devation <- indmean_dev$mean_dev
+# in function exclude_sub(x,e,p), x is data, e: 1,SD method; 2, MAD method, p: threshold
+indmean_dev[exclude_sub(mean_devation,2,2),]
+```
+
+## plots for each condition
+Get rid of the outliers, and then average performance for different conditions within subjects and then across subjects.
+
+### remaining subjects
+```{r}
+remain_subj_index <- ifelse(index==FALSE,TRUE,FALSE)
+subj_index <- subno[remain_subj_index]
+subj_index
+```
+
+* **Optional**: split subjects into halves according to their mean(abs90)
+```{r eval=FALSE, echo=FALSE}
+# get valid subjects
+opt_clean_data_valid <- clean_data %>% filter(subject %in% subj_index)
+opt_indmean_dev_valid<-opt_clean_data_valid %>% group_by(subject) %>% summarise(mean_dev=mean(abs90))
+opt_indmean_median<-median(opt_indmean_dev_valid$mean_dev)
+# good group
+opt_indmean_good<-opt_indmean_dev_valid[(opt_indmean_dev_valid$mean_dev < opt_indmean_median),]
+# bad group
+opt_indmean_bad<-opt_indmean_dev_valid[(opt_indmean_dev_valid$mean_dev > opt_indmean_median),]
+opt_indmean_good$subject
+opt_indmean_bad$subject
+```
+
+### prepare data for 50% valid/invalid condition of left and right visual field
+```{r echo=FALSE}
+
+con50LR<-data.frame(subject=subj_index,
+  Left.con50_valid=rep(0,length(subj_index)),Left.con50_invalid=rep(0,length(subj_index)),
+  Right.con50_valid=rep(0,length(subj_index)),Right.con50_invalid=rep(0,length(subj_index)))
+                    
+for (s in 1:length(subj_index)){
+  sub_con50L_valid<-clean_data %>% filter(subject==subj_index[s],type==2,val==1,loc==2)
+  sub_con50L_invalid<-clean_data %>% filter(subject==subj_index[s],type==2,val==0,loc==2)
+  sub_con50R_valid<-clean_data %>% filter(subject==subj_index[s],type==2,val==1,loc==1)
+  sub_con50R_invalid<-clean_data %>% filter(subject==subj_index[s],type==2,val==0,loc==1)
+  
+  # mean_sub_con50L_valid<-mean(sub_con50L_valid$normdata)
+  # mean_sub_con50L_invalid<-mean(sub_con50L_invalid$normdata)
+  # mean_sub_con50R_valid<-mean(sub_con50R_valid$normdata)
+  # mean_sub_con50R_invalid<-mean(sub_con50R_invalid$normdata)
+  
+  mean_sub_con50L_valid<-mean(sub_con50L_valid$abs90)
+  mean_sub_con50L_invalid<-mean(sub_con50L_invalid$abs90)
+  mean_sub_con50R_valid<-mean(sub_con50R_valid$abs90)
+  mean_sub_con50R_invalid<-mean(sub_con50R_invalid$abs90)
+  
+  con50LR[s,2]<-mean_sub_con50L_valid
+  con50LR[s,3]<-mean_sub_con50L_invalid
+  con50LR[s,4]<-mean_sub_con50R_valid
+  con50LR[s,5]<-mean_sub_con50R_invalid
+}
+
+head(con50LR)
+```
+
+### prepare data for 100% condition of left and right visual field
+```{r echo=FALSE}
+con100LR<-data.frame(Left.con100=rep(0,length(subj_index)),
+                     Right.con100=rep(0,length(subj_index)))
+                     
+for (s in 1:length(subj_index)){
+  sub_con100L<-clean_data %>% filter(subject==subj_index[s],val==-1,loc==2)
+  sub_con100R<-clean_data %>% filter(subject==subj_index[s],val==-1,loc==1)
+  
+  # mean_sub_con100L<-mean(sub_con100L$normdata)
+  # mean_sub_con100R<-mean(sub_con100R$normdata)
+  
+  mean_sub_con100L<-mean(sub_con100L$abs90)
+  mean_sub_con100R<-mean(sub_con100R$abs90)
+  
+  con100LR[s,1]<-mean_sub_con100L
+  con100LR[s,2]<-mean_sub_con100R
+}
+head(con100LR)
+```
+Combine condition results.
+```{r }
+ind_data_LR<-cbind(con50LR,con100LR)
+```
+
+### **optional** write out data for statistical analysis
+```{r eval=FALSE}
+write.csv(ind_data_LR,'ind_data_LR_39subjs_noexclu.csv')
+```
+
+### plot results
+To plot results, we firstly need to prepare data in long format.
+```{r echo=FALSE}
+long_ind_data <- ind_data_LR %>% gather(condition,error,Left.con50_valid:Right.con100)
+split_ind_data <- long_ind_data %>% separate(condition,c("VF","Validity"),sep="\\.")
+rename_data <- split_ind_data %>% mutate(Validity1=ifelse(Validity=="con50_valid","50% cued",ifelse(Validity=="con50_invalid","50% uncued","100% cued"))) %>% select(-Validity) %>%
+  rename(Validity = Validity1)
+head(rename_data)
+```
+Generate plot for each condition (**don't collapse visual fields**).
+
+Firstly, calculate within-subject SEM.
+```{r echo=FALSE}
+aver_data<- ind_data_LR %>% mutate(aver=((Left.con50_valid+Left.con50_invalid+Left.con100+
+                                          Right.con50_valid+Right.con50_invalid+Right.con100)/6))
+grandaver<- mean(aver_data$aver)
+aver_data <- aver_data %>% mutate(grand_aver=rep(grandaver,nrow(aver_data)))
+
+normalized_inddata<-aver_data %>% mutate(nor_con50Lval=Left.con50_valid-aver+grand_aver,
+                                         nor_con50Linv=Left.con50_invalid-aver+grand_aver,
+                                         nor_con100L=Left.con100-aver+grand_aver,
+                                         nor_con50Rval=Right.con50_valid-aver+grand_aver,
+                                         nor_con50Rinv=Right.con50_invalid-aver+grand_aver,
+                                         nor_con100R=Right.con100-aver+grand_aver)
+nor_inddata<-normalized_inddata %>% select(starts_with("nor")) 
+
+# test if the calculation is correct
+# normalized_inddata %>% mutate(meancon=((nor_con100+nor_con50val+nor_con50inv)/3))
+
+nor_mean_conds<-sapply(nor_inddata,mean)
+nor_se_conds<-sapply(nor_inddata,function(x){1.96*(sd(x)/sqrt(length(x)))}) #(CI=95%)
+
+# SE @ 95% CI usually looks something like this:
+# df$se <- 1.96*(sd(your_data, na.rm=T)/sqrt(your_n))
+
+```
+Secondly, generate bar plot with 95% CI around the mean.  
+I used color from `yarrr` package.
+```{r}
+my.cols <- yarrr::piratepal(palette = "google",  
+                     trans = .5)
+head(my.cols)
+```
+
+```{r echo=FALSE}
+
+# Your upper and lower CI bounds will just be df$se +/- the response 
+# (as shown in the aes() for geom_errorbar(), above)
+
+nor_errorplot<-data.frame(error=nor_mean_conds,se=nor_se_conds)
+limits<-aes(ymax=error+se,ymin=error-se)
+nor_errorplot$con<-rownames(nor_errorplot)
+rownames(nor_errorplot)<-NULL
+
+nor_errorplot$VF<-c(rep("Left",3),rep("Right",3))
+nor_errorplot$Validity<-rep(c("50% cued","50% uncued","100% cued"),2)
+
+nor_errorplot$Validity<-factor(nor_errorplot$Validity,levels=c("50% uncued","50% cued","100% cued")) # control the bar order
+
+indpoint_plot <- rename_data
+indpoint_plot$Validity<-factor(indpoint_plot$Validity,levels=c("50% uncued","50% cued","100% cued")) # control point order
+
+# the mean results(normalized results) in "nor_errplot" were the same as in raw results "ind_data_LR"
+not_collapsed<-ggplot(nor_errorplot,aes(x=factor(VF),y=error,fill=Validity))+
+      geom_bar(stat="identity",position=position_dodge(width=0.7),alpha=0.6,width=0.7)+
+      geom_errorbar(limits,width=0.1,position=position_dodge(width=0.7),size=1,alpha=0.7)+
+      scale_fill_manual(values=c("#3D79F37F","#E6352F7F","#F9B90A7F"))+
+      geom_point(data=indpoint_plot,aes(color=Validity),position=position_jitterdodge(dodge.width=0.7, jitter.width = 0.2),alpha=0.2)+
+      scale_color_manual(values=c("#3D79F37F","#E6352F7F","#F9B90A7F"))+
+      coord_cartesian(ylim=c(5,31))+theme_classic()+
+        theme(axis.text.x=element_text(size=16),
+        axis.text.y=element_text(size=16),
+        axis.title.x=element_text(face="bold",size=18),
+        axis.title.y=element_text(face="bold",size=18))
+
+not_collapsed
+
+```
+
+### collapse across visual fields
+
+Since visual field is not significant(see JASP results), here I am collapsing visua fields and generate new plot.
+
+```{r echo=FALSE}
+# con50
+con50LR_collapsed<-data.frame(subject=subj_index,
+                    con50_valid=rep(0,length(subj_index)),con50_invalid=rep(0,length(subj_index)))
+
+for (s in 1:length(subj_index)){
+  sub_con50_valid<-clean_data %>% filter(subject==subj_index[s],type==2,val==1)
+  sub_con50_invalid<-clean_data %>% filter(subject==subj_index[s],type==2,val==0)
+  mean_sub_con50_valid<-mean(sub_con50_valid$abs90)
+  mean_sub_con50_invalid<-mean(sub_con50_invalid$abs90)
+  con50LR_collapsed[s,2]<-mean_sub_con50_valid
+  con50LR_collapsed[s,3]<-mean_sub_con50_invalid
+}
+
+## con100
+con100LR_collapsed<-data.frame(con100=rep(0,length(subj_index)))
+
+for (s in 1:length(subj_index)){
+  sub_con100<-clean_data %>% filter(subject==subj_index[s],val==-1)
+  mean_sub_con100<-mean(sub_con100$abs90)
+  con100LR_collapsed[s,1]<-mean_sub_con100
+}
+
+# combine data
+meanLR_ind <- data.frame(ID = subj_index, con50_valid = con50LR_collapsed$con50_valid,
+                         con50_invalid = con50LR_collapsed$con50_invalid, con100 = con100LR_collapsed$con100)
+
+# calcualte within-subject SEM
+aver_meanLR<- meanLR_ind %>% mutate(aver=((con50_valid+con50_invalid+con100)/3))
+grandaver_meanLR<- mean(aver_meanLR$aver)
+
+aver_meanLR <- aver_meanLR %>% mutate(grand_aver=rep(grandaver_meanLR,nrow(aver_meanLR)))
+
+normalized_inddata_meanLR<-aver_meanLR %>% mutate(nor_con50val=con50_valid-aver+grand_aver,
+                                                  nor_con50inv=con50_invalid-aver+grand_aver,
+                                                  nor_con100=con100-aver+grand_aver)
+
+nor_inddata_meanLR<-normalized_inddata_meanLR %>% select(starts_with("nor")) 
+
+nor_meanLR_conds<-sapply(nor_inddata_meanLR,mean)
+nor_se_meanLR_conds<-sapply(nor_inddata_meanLR,function(x){1.96*(sd(x)/sqrt(length(x)))})
+
+# plot - prepare data for bar graph
+# nor_meanLR_conds equal to mean(aver_meanLR), i.e. raw mean equal to normalized mean 
+nor_meanLR_errorplot<-data.frame(error=nor_meanLR_conds,se=nor_se_meanLR_conds)
+
+limits<-aes(ymax=error+se,ymin=error-se)
+nor_meanLR_errorplot$con<-rownames(nor_meanLR_errorplot)
+rownames(nor_meanLR_errorplot)<-NULL
+
+nor_meanLR_errorplot$Validity<-c("50% cued","50% uncued","100% cued")
+
+nor_meanLR_errorplot$Validity<-factor(nor_meanLR_errorplot$Validity,levels=c("50% uncued","50% cued","100% cued")) # control the bar order
+
+# plot - prepare data for point graph
+indpoint_meanLR_plot<-meanLR_ind %>% gather(con,error,con50_valid:con100) %>% mutate(Validity=ifelse(con=="con50_valid","50% cued",ifelse(con=="con50_invalid","50% uncued","100% cued")))
+
+indpoint_meanLR_plot$Validity<-factor(indpoint_meanLR_plot$Validity,levels=c("50% uncued","50% cued","100% cued")) # control point order
+
+indpoint_meanLR_plot$ID <- factor(indpoint_meanLR_plot$ID)
+
+# the mean results(normalized results) in "nor_errplot" were the same as in raw results "ind_data_LR"
+# replace yellow color: "#F9B90A7F" with another color #3C5488B2
+collapsed<-ggplot(nor_meanLR_errorplot,aes(x=Validity,y=error,fill=Validity))+
+  geom_bar(stat="identity",position=position_dodge(width=0.7),alpha=0.7,width=0.7)+
+  geom_errorbar(limits,width=0.1,position=position_dodge(width=0.7),size=1,alpha=0.7)+
+  scale_fill_manual(values=c("#3D79F37F","#E6352F7F","#F9B90A7F"))+
+  geom_point(data=indpoint_meanLR_plot,aes(color=Validity),position=position_jitterdodge(dodge.width=0.7, jitter.width = 0.2),alpha=0.3,size=4)+
+  geom_line(data=indpoint_meanLR_plot,aes(x=Validity,y=error,group=ID),alpha=0.2,size=0.6,color='lightslateblue')+
+  scale_color_manual(values=c("#3D79F37F","#E6352F7F","#F9B90A7F"))+
+  coord_cartesian(ylim=c(5,31))+theme_classic()+ # check maximum value for each condition
+  theme(axis.text.x=element_text(size=16),
+        axis.text.y=element_text(size=16),
+        axis.title.x=element_text(face="bold",size=18),
+        axis.title.y=element_text(face="bold",size=18))
+
+collapsed
+
+```
+
+* **optional** save plots
+```{r eval=FALSE}
+save_plot("accuracy_LR_collapsed.pdf",collapsed) # save_plot is a function of cowplot package
+save_plot("accuracy_LR_notcollapsed.pdf",not_collapsed)
+```
+
+The end!
